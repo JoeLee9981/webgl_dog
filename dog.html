@@ -3,61 +3,115 @@
 <script id="vertex-shader" type="x-shader/x-vertex">
 
 attribute vec4 vPosition;
-attribute vec4 vColor;
+attribute vec4 vNormal;
+
 varying vec4 fColor;
 
-/*
-	cubeTheta is used to manipulate the vertex by a factor
-		of x, y, z as set by the user by the buttons
-*/
-uniform vec3 cubeTheta;
+uniform vec4 lightAmbient, lightDiffuse, lightSpecular;
+uniform vec4 materialAmbient, materialDiffuse, materialSpecular;
+uniform bool useGoraud;
+
 
 //model view matrix
 uniform mat4 mvMatrix;
 //projection matrix
 uniform mat4 projectionMatrix;
+//normal matrix
+uniform mat4 normalMatrix;
+
+uniform vec4 lightDirection;
+uniform float shininess;
+
+//varyings used for frag shading
+varying vec3 vNorm;
+varying vec3 vEye;
 
 void main()
 {
-	//Calculate cube offset rotation and apply
-	/*
-	vec3 angle = radians(cubeTheta);
-	vec3 c = cos(angle);
-	vec3 s = sin(angle);
-	
-	mat4 rotationCubeX = mat4(
-		1.0,  0.0,  0.0,  0.0,
-		0.0,  c.x, -s.x,  0.0,
-		0.0,  s.x,  c.x,  0.0,
-		0.0,  0.0,  0.0,  1.0 );
-	
-	mat4 rotationCubeY = mat4(
-		c.y,  0.0, -s.y,  0.0,
-		0.0,  1.0,  0.0,  0.0,
-		s.y,  0.0,  c.y,  0.0,
-		0.0,  0.0,  0.0,  1.0 );
-	
-	mat4 rotationCubeZ = mat4(
-		c.z, -s.z,  0.0,  0.0,
-		s.z,  c.z,  0.0,  0.0,
-		0.0,  0.0,  1.0,  0.0,
-		0.0,  0.0,  0.0,  1.0 ); */
-		
-	fColor = vColor;
+	if(useGoraud) {
+		vec4 vert = mvMatrix * vPosition;
 
-	gl_Position = projectionMatrix * vPosition;
+		vec3 N = vec3(normalMatrix * vNormal);
+		vec3 L = normalize(vec3(lightDirection.xyz));
+		
+		float lamb = dot(N, -L);
+		
+		vec4 ambient = lightAmbient * materialAmbient;
+		vec4 diffuse = vec4(0.0, 0.0, 0.0, 1.0);
+		vec4 specular = vec4(0.0, 0.0, 0.0, 1.0);
+		
+		if(lamb > 0.0) {
+			diffuse = lightDiffuse * materialDiffuse * lamb;
+			
+			vec3 eye = -vec3(vert.xyz);
+			vec3 E = normalize(eye);
+			vec3 R = reflect(L, N);
+			float spec = pow(max(dot(R, E), 0.0), shininess);
+			
+			specular = lightSpecular * materialSpecular * spec;
+		}
+		
+		
+		fColor = ambient + diffuse + specular;
+		fColor.a = 1.0;
+	}
+	else {
+		vec4 transformedVert = mvMatrix * vPosition;
+		
+		vNorm = vec3(normalMatrix * vNormal);
+		
+		vEye = -vec3(transformedVert);
+	}
+	gl_Position = projectionMatrix * mvMatrix * vPosition;
 }
 </script>
 
 <script id="fragment-shader" type="x-shader/x-fragment">
 
-precision mediump float;
+precision highp float;
+
+uniform bool usePhong;
+uniform float shininess;
+uniform vec4 lightDirection;
+
+uniform vec4 lightAmbient, lightDiffuse, lightSpecular;
+uniform vec4 materialAmbient, materialDiffuse, materialSpecular;
+
+varying vec3 vNorm;
+varying vec3 vEye;
 
 varying vec4 fColor;
 
 void main()
 {
-	gl_FragColor = fColor;
+	if(usePhong) {
+		vec3 L = normalize(lightDirection.xyz);
+		vec3 N = normalize(vNorm);
+		
+		float lamb = dot(N, -L);
+
+		vec4 ambient = lightAmbient * materialAmbient;
+		vec4 diffuse = vec4(0.0, 0.0, 0.0, 1.0);
+		vec4 specular = vec4(0.0, 0.0, 0.0, 1.0);
+		
+		//verify lambert is positive
+		if(lamb > 0.0) {
+			diffuse = lightDiffuse * materialDiffuse * lamb;
+			
+			vec3 E = normalize(vEye);
+			vec3 R = reflect(L, N);
+			float spec = pow(max(dot(R, E), 0.0), shininess);
+			
+			specular = lightSpecular * materialSpecular * spec;
+		} 
+		vec4 result = ambient + diffuse + specular;
+		result.a = 1.0;
+		
+		gl_FragColor = result;
+	}
+	else {
+		gl_FragColor = fColor;
+	}
 }
 </script>
 
@@ -70,7 +124,64 @@ void main()
 <canvas id="gl-canvas" width="512"" height="512">
 Your browser doesn't support the HTML5 canvas element
 </canvas>
-
+<br/>
+<table>
+	<tr>
+	<td>
+		<label for="viewRotateSlider">Rotate View: </label>
+	</td>
+		<td>
+			<input type="range" name="viewRotate" id="viewRotateSlider" min="0" max="360"
+				value="0" onChange="rotateView()" />
+			<label for="viewRotateSlider" id="viewThetaLabel">0</label><br/>
+		</td>
+		<td>
+			<label>Follow Camera: </label>
+		</td>
+	</tr>
+	<tr>
+		<td>
+			<label for="dogSpeedSlider">Dog Speed: </label>
+		</td>
+		<td>
+			<input type="range" name="dogSpeedSlider" id="dogSpeedSlider" min="0" max="10"
+				value="2" onChange="setSpeed()" />
+			<label for="dogSpeedSlider" id="dogSpeedLabel">2</label><br/>
+		</td>
+		<td>
+			<input type="radio" name="followCamera" id="followCamera" value="Y" checked>Yes</input>
+			<input type="radio" name="followCamera" id="stationary" value="N">No</input>
+		</td>
+	</tr>
+	<tr>
+		<td>
+			<label for="lookAtSlider">Look At: </label>
+		</td>
+		<td>
+			<input type="range" name="lookAtSlider" id="lookAtSlider" min="0" max="10"
+				value="0" onChange="setLookAt" />
+			<label for="lookAtSlider" id="lookAtLabel">0</label><br/>
+		</td>
+		<td>
+			<label>Lighting Style:</label>
+		</td>
+	</tr>
+	<tr>
+		<td>
+			<label for="eyePointSlider">Adjust pitch: </label>
+		</td>
+		<td>
+			<input type="range" name="eyePointSlider" id="eyePointSlider" min="-10" max="10"
+				value="0" onChange="setHeight()" />
+			<label for="eyePointSlider" id="eyePointLabel">0</label><br/>
+		</td>
+		<td>
+			<input type="radio" name="shadingStyle" id="vertexShading" onChange="switchLightModel()" value="Y" checked>Vertex</input>
+			<input type="radio" name="shadingStyle" id="fragmentShading" onChange="switchLightModel()" value="N">Fragment</input>
+		</td>
+	</tr>
+</table>
+<label id="debugLabel"/>
 
 </body>
 </html>
